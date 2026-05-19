@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	gov "github.com/gowvp/onvif"
@@ -82,7 +83,17 @@ func (c *Client) GetStreamUri(profileToken string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("GetStreamUri: %w", err)
 	}
-	return string(uriResp.MediaUri.Uri), nil
+
+	raw := string(uriResp.MediaUri.Uri)
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw, nil
+	}
+	if u.User == nil {
+		u.User = url.UserPassword(c.params.Username, c.params.Password)
+	}
+	return u.String(), nil
 }
 
 func (c *Client) GetProfiles() ([]ProfileInfo, error) {
@@ -114,7 +125,12 @@ func (c *Client) GetProfiles() ([]ProfileInfo, error) {
 			ProfileToken: p.Token,
 		})
 		if err == nil {
-			pi.RTSPURL = string(uriResp.MediaUri.Uri)
+			raw := string(uriResp.MediaUri.Uri)
+			if u, e := url.Parse(raw); e == nil && u.User == nil {
+				u.User = url.UserPassword(c.params.Username, c.params.Password)
+				raw = u.String()
+			}
+			pi.RTSPURL = raw
 		}
 
 		snapResp, err := sdk_media.Call_GetSnapshotUri(ctx, c.dev, media.GetSnapshotUri{
