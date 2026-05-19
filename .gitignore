@@ -1,0 +1,10 @@
+hls/
+snapshots/
+go_onvif
+*.db
+*.test
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
