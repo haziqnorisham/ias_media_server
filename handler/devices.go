@@ -3,15 +3,18 @@ package handler
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
 	"go_onvif/db"
 	"go_onvif/onvif"
+	"go_onvif/stream"
 )
 
 type DeviceHandler struct {
-	DB *sql.DB
+	DB        *sql.DB
+	StreamMgr *stream.StreamManager
 }
 
 type createDeviceRequest struct {
@@ -201,6 +204,27 @@ func (h *DeviceHandler) SetStreamProfile(w http.ResponseWriter, r *http.Request)
 	}
 
 	device, _ := db.GetDeviceByID(h.DB, id)
+	if device == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device not found after update"})
+		return
+	}
+
+	h.StreamMgr.StopStream(id)
+
+	client, err := onvif.Connect(device.IP, device.Port, device.Username, device.Password)
+	if err != nil {
+		log.Printf("stream-profile restart %d: onvif connect: %v", id, err)
+		writeJSON(w, http.StatusOK, device)
+		return
+	}
+	rtspURL, err := client.GetStreamUri(req.Token)
+	if err != nil {
+		log.Printf("stream-profile restart %d: GetStreamUri: %v", id, err)
+		writeJSON(w, http.StatusOK, device)
+		return
+	}
+
+	h.StreamMgr.StartStream(id, device.Name, req.Token, rtspURL)
 	writeJSON(w, http.StatusOK, device)
 }
 

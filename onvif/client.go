@@ -68,6 +68,23 @@ func (c *Client) GetDeviceInfo() (*DeviceInfo, error) {
 	}, nil
 }
 
+func (c *Client) GetStreamUri(profileToken string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	uriResp, err := sdk_media.Call_GetStreamUri(ctx, c.dev, media.GetStreamUri{
+		StreamSetup: xsd_onvif.StreamSetup{
+			Stream:    "RTP-Unicast",
+			Transport: xsd_onvif.Transport{Protocol: "RTSP"},
+		},
+		ProfileToken: xsd_onvif.ReferenceToken(profileToken),
+	})
+	if err != nil {
+		return "", fmt.Errorf("GetStreamUri: %w", err)
+	}
+	return string(uriResp.MediaUri.Uri), nil
+}
+
 func (c *Client) GetProfiles() ([]ProfileInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
