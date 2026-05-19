@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
+
+	"go_onvif/config"
 	"go_onvif/db"
 	"go_onvif/handler"
 	"go_onvif/middleware"
@@ -19,26 +22,28 @@ import (
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	slog.SetDefault(slog.New(h))
 
-	sqlite, err := db.Init("onvif.db")
+	godotenv.Load()
+
+	cfg := config.Load()
+
+	sqlite, err := db.Init(cfg.DBPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "database init failed: %v\n", err)
+		slog.Error("database init failed", "error", err)
 		os.Exit(1)
 	}
 	defer sqlite.Close()
-	fmt.Println("database: OK")
+	slog.Info("database initialized", "path", cfg.DBPath)
 
-	streamMgr, err := stream.NewStreamManager("hls")
+	streamMgr, err := stream.NewStreamManager(cfg.HLSDir, cfg.HLSTime, cfg.HLSListSize)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "stream manager init failed: %v\n", err)
+		slog.Error("stream manager init failed", "error", err)
 		os.Exit(1)
 	}
 	defer streamMgr.Shutdown()
-	fmt.Println("stream manager: OK")
+	slog.Info("stream manager initialized", "hls_dir", cfg.HLSDir, "hls_time", cfg.HLSTime, "hls_list_size", cfg.HLSListSize)
 
 	dh := &handler.DeviceHandler{DB: sqlite, StreamMgr: streamMgr}
 	sh := &handler.StreamHandler{Manager: streamMgr, DB: sqlite}
@@ -57,7 +62,7 @@ func main() {
 	mux.HandleFunc("POST /api/streams/{device_id}/start", sh.Start)
 	mux.HandleFunc("POST /api/streams/{device_id}/stop", sh.Stop)
 
-	mux.Handle("GET /hls/", http.StripPrefix("/hls/", http.FileServer(http.Dir("hls"))))
+	mux.Handle("GET /hls/", http.StripPrefix("/hls/", http.FileServer(http.Dir(cfg.HLSDir))))
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		if err := sqlite.Ping(); err != nil {
@@ -72,7 +77,7 @@ func main() {
 	})
 
 	server := &http.Server{
-		Addr:         ":" + port,
+		Addr:         ":" + cfg.Port,
 		Handler:      middleware.CORS(mux),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -83,9 +88,9 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		fmt.Printf("ias_media_server listening on :%s\n", port)
+		slog.Info("server listening", "port", cfg.Port)
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+			slog.Error("server error", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -93,7 +98,7 @@ func main() {
 	go autoIngest(sqlite, streamMgr)
 
 	<-stop
-	fmt.Println("\nshutting down...")
+	slog.Info("shutting down")
 
 	streamMgr.Shutdown()
 
@@ -107,7 +112,7 @@ func autoIngest(database *sql.DB, mgr *stream.StreamManager) {
 
 	devices, err := db.ListDevices(database)
 	if err != nil {
-		log.Printf("auto-ingest: list devices: %v", err)
+		slog.Error("auto-ingest: list devices failed", "error", err)
 		return
 	}
 
@@ -119,12 +124,12 @@ func autoIngest(database *sql.DB, mgr *stream.StreamManager) {
 		go func() {
 			client, err := onvif.Connect(dev.IP, dev.Port, dev.Username, dev.Password)
 			if err != nil {
-				log.Printf("auto-ingest %s: connect: %v", dev.Name, err)
+				slog.Warn("auto-ingest: onvif connect failed", "device_id", dev.ID, "device_name", dev.Name, "error", err)
 				return
 			}
 			rtspURL, err := client.GetStreamUri(dev.StreamProfileToken)
 			if err != nil {
-				log.Printf("auto-ingest %s: GetStreamUri: %v", dev.Name, err)
+				slog.Warn("auto-ingest: GetStreamUri failed", "device_id", dev.ID, "device_name", dev.Name, "error", err)
 				return
 			}
 			mgr.StartStream(dev.ID, dev.Name, dev.StreamProfileToken, rtspURL)

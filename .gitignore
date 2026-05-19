@@ -3,6 +3,7 @@ snapshots/
 go_onvif
 *.db
 *.test
+.env
 *.exe
 *.exe~
 *.dll

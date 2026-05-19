@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,18 +27,22 @@ type StreamSession struct {
 }
 
 type StreamManager struct {
-	mu       sync.Mutex
-	sessions map[int64]*StreamSession
-	hlsDir   string
+	mu          sync.Mutex
+	sessions    map[int64]*StreamSession
+	hlsDir      string
+	hlsTime     int
+	hlsListSize int
 }
 
-func NewStreamManager(hlsDir string) (*StreamManager, error) {
+func NewStreamManager(hlsDir string, hlsTime, hlsListSize int) (*StreamManager, error) {
 	if err := os.MkdirAll(hlsDir, 0755); err != nil {
 		return nil, fmt.Errorf("create hls dir: %w", err)
 	}
 	return &StreamManager{
-		sessions: make(map[int64]*StreamSession),
-		hlsDir:   hlsDir,
+		sessions:    make(map[int64]*StreamSession),
+		hlsDir:      hlsDir,
+		hlsTime:     hlsTime,
+		hlsListSize: hlsListSize,
 	}, nil
 }
 
@@ -129,7 +133,7 @@ func (m *StreamManager) runStream(session *StreamSession) {
 		playlistPath := filepath.Join(m.hlsDir, fmt.Sprintf("%d", session.DeviceID), "index.m3u8")
 
 		if err := os.MkdirAll(filepath.Dir(playlistPath), 0755); err != nil {
-			log.Printf("stream %d: mkdir: %v", session.DeviceID, err)
+			slog.Error("stream mkdir failed", "device_id", session.DeviceID, "error", err)
 			cancel()
 			return
 		}
@@ -140,8 +144,8 @@ func (m *StreamManager) runStream(session *StreamSession) {
 			"-c:v", "copy",
 			"-an",
 			"-f", "hls",
-			"-hls_time", "2",
-			"-hls_list_size", "3",
+			"-hls_time", fmt.Sprintf("%d", m.hlsTime),
+			"-hls_list_size", fmt.Sprintf("%d", m.hlsListSize),
 			"-hls_flags", "delete_segments",
 			"-hls_segment_filename", segmentPattern,
 			playlistPath,
@@ -157,7 +161,7 @@ func (m *StreamManager) runStream(session *StreamSession) {
 		session.Error = ""
 		m.mu.Unlock()
 
-		log.Printf("stream %d [%s]: started ffmpeg", session.DeviceID, session.DeviceName)
+		slog.Info("ffmpeg started", "device_id", session.DeviceID, "device_name", session.DeviceName)
 
 		err := cmd.Run()
 
@@ -170,7 +174,7 @@ func (m *StreamManager) runStream(session *StreamSession) {
 		session.Error = fmt.Sprintf("ffmpeg: %v", err)
 		m.mu.Unlock()
 
-		log.Printf("stream %d [%s]: ffmpeg exited — %v", session.DeviceID, session.DeviceName, err)
+		slog.Warn("ffmpeg exited", "device_id", session.DeviceID, "device_name", session.DeviceName, "error", err)
 
 		time.Sleep(2 * time.Second)
 	}
