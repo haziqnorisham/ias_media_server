@@ -35,6 +35,9 @@ type StreamManager struct {
 }
 
 func NewStreamManager(hlsDir string, hlsTime, hlsListSize int) (*StreamManager, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return nil, fmt.Errorf("ffmpeg not found in PATH: %w", err)
+	}
 	if err := os.MkdirAll(hlsDir, 0755); err != nil {
 		return nil, fmt.Errorf("create hls dir: %w", err)
 	}
