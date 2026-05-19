@@ -1,0 +1,417 @@
+openapi: "3.0.3"
+info:
+  title: IAS Media Server
+  description: REST API for managing ONVIF camera devices. Stores device credentials locally in SQLite and queries ONVIF cameras live for profiles, RTSP URLs, and snapshots.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: health
+    description: Service health
+  - name: devices
+    description: Device CRUD operations
+  - name: profiles
+    description: Live ONVIF profile queries
+
+paths:
+
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      description: Pings the SQLite database and returns service status.
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: healthy
+        "503":
+          description: Service is unhealthy (database unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: unhealthy
+                error: sqlite ping timeout
+
+  /api/devices:
+    post:
+      tags: [devices]
+      summary: Add a new ONVIF device
+      description: Stores device credentials in the local database. Port defaults to 80 if omitted. Password is never returned in responses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDeviceRequest"
+            example:
+              name: Front Gate
+              ip: 192.168.1.100
+              port: 80
+              username: admin
+              password: password123
+      responses:
+        "201":
+          description: Device created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          description: Missing required fields (name, ip, username, password)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Database error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags: [devices]
+      summary: List all devices
+      description: Returns all stored devices. Passwords are not included.
+      responses:
+        "200":
+          description: List of devices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+        "500":
+          description: Database error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/devices/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+        description: Device ID
+
+    get:
+      tags: [devices]
+      summary: Get a single device
+      responses:
+        "200":
+          description: Device found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          description: Invalid device ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    put:
+      tags: [devices]
+      summary: Update a device
+      description: All fields are optional — only send the ones you want to change. Empty/omitted fields keep their existing values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDeviceRequest"
+            example:
+              name: Front Gate (Updated)
+              notes: Installed 2026-05-19
+      responses:
+        "200":
+          description: Device updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags: [devices]
+      summary: Delete a device
+      responses:
+        "200":
+          description: Device deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResponse"
+              example:
+                status: deleted
+        "400":
+          description: Invalid device ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/devices/{id}/profiles:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+        description: Device ID
+
+    get:
+      tags: [profiles]
+      summary: Get live ONVIF profiles
+      description: |
+        Connects to the ONVIF camera using stored credentials and fetches media profiles live.
+        Returns profile tokens, names, video encodings, resolutions, and RTSP/snapshot URLs.
+      x-live: true
+      responses:
+        "200":
+          description: Live profiles retrieved from camera
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilesResponse"
+        "400":
+          description: Invalid device ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: ONVIF connection failed (camera unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/devices/{id}/stream-profile:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+        description: Device ID
+
+    put:
+      tags: [profiles]
+      summary: Set active stream profile
+      description: Selects which ONVIF profile token to use for HLS streaming. The token is stored in the database for persistence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetStreamProfileRequest"
+            example:
+              token: profile_0
+      responses:
+        "200":
+          description: Stream profile set — returns updated device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          description: Missing token or invalid device ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Database error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+
+    Device:
+      type: object
+      description: Stored device (password is never included in responses)
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        ip:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+        stream_profile_token:
+          type: string
+          description: ONVIF profile token selected for future HLS streaming
+        notes:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateDeviceRequest:
+      type: object
+      required: [name, ip, username, password]
+      properties:
+        name:
+          type: string
+          description: Friendly name for the camera
+        ip:
+          type: string
+          description: Camera IP address
+        port:
+          type: integer
+          default: 80
+          description: ONVIF service port
+        username:
+          type: string
+          description: ONVIF authentication username
+        password:
+          type: string
+          format: password
+          description: ONVIF authentication password
+
+    UpdateDeviceRequest:
+      type: object
+      description: All fields optional — omitted fields keep their existing values. Empty strings are treated as value updates.
+      properties:
+        name:
+          type: string
+        ip:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        stream_profile_token:
+          type: string
+        notes:
+          type: string
+
+    SetStreamProfileRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: ONVIF profile token to use for HLS streaming
+
+    ProfileInfo:
+      type: object
+      description: Live ONVIF media profile fetched from the camera
+      properties:
+        token:
+          type: string
+          description: ONVIF profile token
+        name:
+          type: string
+          description: Profile display name
+        encoding:
+          type: string
+          description: Video encoding (e.g. H264)
+        width:
+          type: integer
+          description: Video resolution width in pixels
+        height:
+          type: integer
+          description: Video resolution height in pixels
+        rtsp_url:
+          type: string
+          description: RTSP stream URL
+        snapshot_url:
+          type: string
+          description: Snapshot image URL
+
+    ProfilesResponse:
+      type: object
+      properties:
+        device_id:
+          type: integer
+          format: int64
+        profiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProfileInfo"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        error:
+          type: string
+          description: Present only when status is unhealthy
+
+    DeleteResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [deleted]
