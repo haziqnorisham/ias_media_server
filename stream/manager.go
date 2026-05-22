@@ -144,7 +144,9 @@ func (m *StreamManager) runStream(session *StreamSession) {
 		args := []string{
 			"-rtsp_transport", "tcp",
 			"-i", session.RTSPURL,
-			"-c:v", "copy",
+			"-c:v", "libx264",
+			"-preset", "ultrafast",
+			"-tune", "zerolatency",
 			"-an",
 			"-f", "hls",
 			"-hls_time", fmt.Sprintf("%d", m.hlsTime),
